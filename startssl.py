@@ -359,7 +359,7 @@ class API(object):
 
             subjects = []
             for t, v in csr.get_subject_alt_names(types=['dNSName']):
-                if v not in subjects:
+                if v not in subjects and v != csr_cn and v != csr_cn_validated_domain:
                     subjects.append(v)
 
             subjects_direct = []
