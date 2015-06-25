@@ -353,31 +353,26 @@ class API(object):
         self.get_validated_resources()
 
         if profile in ['server', 'xmpp']:
+
             csr_cn = csr.get_common_name()
-            subjects = [csr_cn]
+            csr_cn_validated_domain = self.is_validated_domain(csr_cn)
+
+            subjects = []
             for t, v in csr.get_subject_alt_names(types=['dNSName']):
                 if v not in subjects:
                     subjects.append(v)
 
-            assert len(subjects) > 0, "no subjects found"
-
             subjects_direct = []
             subjects_subdomain = []
-            validated_domain_first = None
             for subject in subjects:
                 validated_domain = self.is_validated_domain(subject)
                 if validated_domain:
-                    if validated_domain not in subjects_direct:
+                    if validated_domain not in subjects_direct and validated_domain != csr_cn_validated_domain:
                         subjects_direct.append(validated_domain)
                     if subject != validated_domain:
                         subjects_subdomain.append(subject)
-
-                    if not validated_domain_first:
-                        validated_domain_first = validated_domain
                 else:
                     raise ValueError("Missing domain validations for %s." % subject)
-
-            assert len(subjects_direct) > 0, "no direct subjects identified."
 
             # submit CSR
             body = [('app', 12), ('rs', 'second_step_certs'), ('rsargs[]', profile), ('rsargs[]', csr.get_pem())]
@@ -390,6 +385,29 @@ class API(object):
             assert item, "no CSR csr_id found"
             assert profile == item.group('type'), "profile mismatch"
             certificate_id = int(item.group('csr_id'))
+
+            # Submit the Common Name second, right after its parent domain
+            # so StartSSL will choose it as the Common Name of the certificate.
+            body = [('app', 12),
+                    ('rs', 'fourth_step_certs'),
+                    ('rsargs[]', profile),
+                    ('rsargs[]', certificate_id),
+                    ('rsargs[]', csr_cn_validated_domain),
+                    ('rsargs[]', '')]
+            resp, content = self.__request(self.STARTSSL_BASEURI,
+                                           method="POST",
+                                           body=body)
+            assert resp.status == 200, "fourth_step_certs bad status"
+            body = [('app', 12),
+                    ('rs', 'fourth_step_certs'),
+                    ('rsargs[]', profile),
+                    ('rsargs[]', certificate_id),
+                    ('rsargs[]', ''),
+                    ('rsargs[]', csr_cn)]
+            resp, content = self.__request(self.STARTSSL_BASEURI,
+                                           method="POST",
+                                           body=body)
+            assert resp.status == 200, "fourth_step_certs bad status"
 
             # add primary (directly verified/drop down box) domains (using 3. rsarg of fourth_step_certs)
             for domain in subjects_direct:
